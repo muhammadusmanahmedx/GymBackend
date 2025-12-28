@@ -58,7 +58,7 @@ export class AuthService {
       console.log('AuthService.signup created user, gym, settings:', { user: created._id.toString(), gym: gym._id.toString(), settings: settings._id.toString() });
 
       const user = created.toObject();
-      delete user.password;
+      (user as any).password = undefined;
       user.gymId = gym._id;
       return user;
     } catch (err: any) {
@@ -82,7 +82,7 @@ export class AuthService {
     const token = jwt.sign(payload, secret, { expiresIn: '7d' });
 
     const safe = user.toObject();
-    delete safe.password;
+    (safe as any).password = undefined;
 
     return { accessToken: token, user: safe };
   }

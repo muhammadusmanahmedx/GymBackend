@@ -30,7 +30,7 @@ export class MembersService {
         const decoded: any = jwt.verify(token, secret);
         const userId = decoded?.sub;
         if (userId) {
-          const user = await this.userModel.findById(userId).lean().exec();
+          const user = (await this.userModel.findById(userId).lean().exec()) as any;
           if (user) {
             if (user.gymId) gymIdStr = String(user.gymId);
             // attach userId to dto so member is linked

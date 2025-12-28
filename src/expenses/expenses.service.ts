@@ -23,7 +23,7 @@ export class ExpensesService {
         const decoded: any = jwt.verify(token, secret);
         userId = decoded?.sub;
         if (userId) {
-          const user = await this.userModel.findById(userId).lean().exec();
+          const user = (await this.userModel.findById(userId).lean().exec()) as any;
           if (user && user.gymId) gymIdStr = String(user.gymId);
         }
       } catch (e) {
@@ -34,7 +34,7 @@ export class ExpensesService {
     const payload: any = {
       ...dto,
       gymId: new Types.ObjectId(gymIdStr),
-      date: new Date(dto.date),
+      date: new Date((dto as any).date),
     };
     if (userId) payload.userId = new Types.ObjectId(userId);
 
