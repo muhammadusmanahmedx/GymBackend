@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsOptional, IsString, IsEmail } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString, IsEmail, IsIn } from 'class-validator';
 
 export class CreateMemberDto {
   @IsNotEmpty()
@@ -26,4 +26,8 @@ export class CreateMemberDto {
 
   @IsOptional()
   gymId?: string;
+
+  @IsOptional()
+  @IsIn(['male', 'female'])
+  gender?: 'male' | 'female';
 }

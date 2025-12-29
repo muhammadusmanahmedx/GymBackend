@@ -37,6 +37,9 @@ export class Member {
   @Prop({ type: Types.ObjectId, ref: 'User', required: false })
   userId?: Types.ObjectId;
 
+  @Prop({ enum: ['male', 'female'], required: false })
+  gender?: string;
+
   createdAt: Date;
   updatedAt: Date;
 }

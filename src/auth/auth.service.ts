@@ -79,7 +79,8 @@ export class AuthService {
 
     const payload = { sub: user._id.toString(), email: user.email, role: user.role };
     const secret = process.env.JWT_SECRET || 'change-me';
-    const token = jwt.sign(payload, secret, { expiresIn: '7d' });
+    // Issue token valid for 24 hours
+    const token = jwt.sign(payload, secret, { expiresIn: '24h' });
 
     const safe = user.toObject();
     (safe as any).password = undefined;
