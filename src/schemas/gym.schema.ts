@@ -10,6 +10,9 @@ export class Gym {
   @Prop({ required: true })
   name: string;
 
+  @Prop({ required: false })
+  location?: string;
+
   @Prop({ required: true, default: 3000 })
   monthlyFee: number;
 

@@ -1,10 +1,10 @@
 import { Injectable, NestMiddleware, UnauthorizedException } from '@nestjs/common';
-import { Request, Response, NextFunction } from 'express';
 import * as jwt from 'jsonwebtoken';
 
 @Injectable()
 export class AuthMiddleware implements NestMiddleware {
-  use(req: Request & { user?: any }, res: Response, next: NextFunction) {
+  // Use `any` for request/response types to avoid requiring @types/express during build
+  use(req: any, res: any, next: any) {
     const auth = req.headers['authorization'] as string | undefined;
     if (!auth || !auth.startsWith('Bearer ')) {
       return res.status(401).json({ message: 'Unauthorized' });
