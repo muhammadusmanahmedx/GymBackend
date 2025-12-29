@@ -6,6 +6,7 @@ import { CreateFeeDto } from './dto/create-fee.dto';
 import { UpdateFeeDto } from './dto/update-fee.dto';
 import { Member, MemberDocument } from '../schemas/member.schema';
 import { Gym, GymDocument } from '../schemas/gym.schema';
+import { Settings, SettingsDocument } from '../settings/settings.schema';
 
 @Injectable()
 export class FeesService {
@@ -75,6 +76,27 @@ export class FeesService {
           // create fee if not exists
           const exists = await this.feeModel.findOne({ memberId: member._id, month: monthStr }).lean().exec();
             if (!exists) {
+            // determine gym monthly fee, prefer per-user settings if present
+            let amount = 0;
+            if (member.gymId) {
+              try {
+                const gym = await this.gymModel.findById(member.gymId).lean().exec();
+                if (gym) {
+                  // try settings for gym owner
+                  try {
+                    const settings = await this.settingsModel.findOne({ userId: gym.ownerId }).lean().exec();
+                    if (settings && typeof settings.monthlyFee === 'number' && settings.monthlyFee > 0) {
+                      amount = settings.monthlyFee;
+                    }
+                  } catch (e) {
+                    // ignore
+                  }
+                  if (!amount && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
+                }
+              } catch (e) {
+                // ignore
+              }
+            }
             const created = await this.feeModel.create({ memberId: member._id, gymId: member.gymId, amount, month: monthStr, dueDate, status: member.feeStatus || 'pending' });
             // also push to member.feeHistory with same _id
             try {

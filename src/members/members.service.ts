@@ -43,11 +43,43 @@ export class MembersService {
     }
     let amount = 0;
 
-    // prefer settings.monthlyFee if present (global per-user settings), otherwise gym.monthlyFee
+    // prefer settings.monthlyFee in this order:
+    // 1) settings for the gym owner (if gymId resolved),
+    // 2) settings for the authenticated user (if available),
+    // 3) gym.monthlyFee
     try {
-      const anySettings = await this.settingsModel.findOne().lean().exec();
-      if (anySettings && typeof anySettings.monthlyFee === 'number' && anySettings.monthlyFee > 0) {
-        amount = anySettings.monthlyFee;
+      let anySettings: any = null;
+      const uid = (dto as any).userId;
+
+      // if we have a gymId, try to read gym and its owner settings first
+      if (gymIdStr) {
+        try {
+          const gymForSettings = await this.gymModel.findById(gymIdStr).lean().exec();
+          if (gymForSettings && gymForSettings.ownerId) {
+            try {
+              anySettings = await this.settingsModel.findOne({ userId: new Types.ObjectId(gymForSettings.ownerId) }).lean().exec();
+            } catch (e) {
+              anySettings = null;
+            }
+            if (anySettings && typeof anySettings.monthlyFee === 'number' && anySettings.monthlyFee > 0) {
+              amount = anySettings.monthlyFee;
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      // if not found via gym owner, fall back to settings for current user
+      if (!amount && uid) {
+        try {
+          anySettings = await this.settingsModel.findOne({ userId: new Types.ObjectId(uid) }).lean().exec();
+        } catch (e) {
+          anySettings = null;
+        }
+        if (anySettings && typeof anySettings.monthlyFee === 'number' && anySettings.monthlyFee > 0) {
+          amount = anySettings.monthlyFee;
+        }
       }
     } catch (e) {
       // ignore
