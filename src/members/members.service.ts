@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, InternalServerErrorException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { MemberDocument, Member } from '../schemas/member.schema';
@@ -89,10 +89,20 @@ export class MembersService {
 
     // create member (feeHistory will be added after fee doc creation to keep ids in sync)
     const gymObjectId = gymIdStr ? new Types.ObjectId(gymIdStr) : undefined;
-    const created = await this.memberModel.create({
-      ...dto,
-      gymId: gymObjectId,
-    });
+    let created: any;
+    try {
+      created = await this.memberModel.create({
+        ...dto,
+        gymId: gymObjectId,
+      });
+    } catch (e) {
+      console.error('MembersService.create - error creating member', e);
+      // Mongo duplicate key
+      if ((e as any)?.code === 11000) {
+        throw new BadRequestException('Member with the same unique field already exists');
+      }
+      throw new InternalServerErrorException('Failed to create member');
+    }
 
     // create an actual fee document referencing the member, then push feeHistory entry
     let feeDoc = null as any;

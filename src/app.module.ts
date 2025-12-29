@@ -1,7 +1,9 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AppController } from './app.controller';
+import { AdminController } from './admin/admin.controller';
+import { UsersController } from './users/users.controller';
 import { AppService } from './app.service';
 
 import { Member, MemberSchema } from './schemas/member.schema';
@@ -31,11 +33,23 @@ import { ExpensesModule } from './expenses/expenses.module';
     AuthModule,
     // Members module provides full CRUD for Member documents
     MembersModule,
+    // Admin endpoints for superbadmin
+    // (admin.controller uses User and Gym models directly)
+    // no separate AdminModule needed for small addition
     SettingsModule,
     ExpensesModule,
     FeesModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, AdminController, UsersController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // Apply AuthMiddleware to all routes except auth endpoints
+    const { AuthMiddleware } = require('./middleware/auth.middleware');
+    consumer
+      .apply(AuthMiddleware)
+      .exclude({ path: 'auth/(.*)', method: RequestMethod.ALL })
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
+  }
+}

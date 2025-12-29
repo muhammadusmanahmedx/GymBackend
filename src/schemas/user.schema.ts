@@ -28,8 +28,8 @@ export class User {
   @Prop({ required: false })
   gymLocation?: string;
 
-  @Prop({ type: String, enum: ['owner', 'staff'], default: 'owner' })
-  role: 'owner' | 'staff';
+  @Prop({ type: String, enum: ['owner', 'staff', 'superbadmin'], default: 'owner' })
+  role: 'owner' | 'staff' | 'superbadmin';
 
   @Prop({ type: Boolean, default: true })
   authorized: boolean;

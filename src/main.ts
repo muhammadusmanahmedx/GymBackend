@@ -8,7 +8,12 @@ async function bootstrap() {
   dotenv.config();
   const app = await NestFactory.create(AppModule);
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-  app.enableCors();
+  // enable CORS for all origins and allow Authorization header for preflight
+  app.enableCors({
+    origin: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+  });
   const port = process.env.PORT || 3001;
   await app.listen(port);
   console.log(`Server listening on http://localhost:${port}`);
