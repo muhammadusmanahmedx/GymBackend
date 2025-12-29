@@ -14,6 +14,7 @@ export class FeesService {
     @InjectModel(Fee.name) private feeModel: Model<FeeDocument>,
     @InjectModel(Member.name) private memberModel: Model<MemberDocument>,
     @InjectModel(Gym.name) private gymModel: Model<GymDocument>,
+    @InjectModel(Settings.name) private settingsModel: Model<SettingsDocument>,
   ) {}
 
   async create(dto: CreateFeeDto) {
