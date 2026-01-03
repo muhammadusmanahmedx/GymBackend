@@ -198,22 +198,24 @@ export class FeesService {
       }
 
       console.log('Found member:', member.name);
-      console.log('Current feeHistory:', JSON.stringify(member.feeHistory));
+      // ensure feeHistory array exists on member document
+      (member as any).feeHistory = Array.isArray((member as any).feeHistory) ? (member as any).feeHistory : [];
+      console.log('Current feeHistory:', JSON.stringify((member as any).feeHistory));
 
       // Find the feeHistory entry by month (more reliable than _id)
       const feeMonth = feeDoc.month;
-      const fhIndex = member.feeHistory.findIndex((fh: any) => fh.month === feeMonth);
+      const fhIndex = (member as any).feeHistory.findIndex((fh: any) => fh.month === feeMonth);
       
       console.log('Looking for month:', feeMonth, 'Found at index:', fhIndex);
 
       if (fhIndex >= 0) {
         // Update the existing feeHistory entry
-        member.feeHistory[fhIndex].status = 'paid';
-        member.feeHistory[fhIndex].paidDate = paidDate;
+        (member as any).feeHistory[fhIndex].status = 'paid';
+        (member as any).feeHistory[fhIndex].paidDate = paidDate;
         console.log('Updated feeHistory entry at index', fhIndex);
       } else {
         // feeHistory entry doesn't exist, add it
-        member.feeHistory.push({
+        (member as any).feeHistory.push({
           month: feeMonth,
           amount: feeDoc.amount,
           dueDate: feeDoc.dueDate,
@@ -242,7 +244,7 @@ export class FeesService {
         console.log('Fee month:', feeDoc.month, '-> Next month:', nextMonth);
 
         // Check if next month fee already exists in feeHistory
-        const nextExists = member.feeHistory.some((fh: any) => fh.month === nextMonth);
+        const nextExists = (member as any).feeHistory.some((fh: any) => fh.month === nextMonth);
         
         console.log('Next month exists in feeHistory?', nextExists);
 
@@ -260,7 +262,7 @@ export class FeesService {
           console.log('Created next month Fee document:', newFee._id);
 
           // Add to feeHistory
-          member.feeHistory.push({
+          (member as any).feeHistory.push({
             month: nextMonth,
             amount: feeDoc.amount,
             dueDate: nextDueDate,

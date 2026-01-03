@@ -266,7 +266,7 @@ export class MembersService {
                     // ignore
                   }
                 }
-                if (!amount && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
+                if (gym && !amount && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
               } catch (e) {
                 // ignore
               }
