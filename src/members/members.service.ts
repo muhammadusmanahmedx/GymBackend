@@ -180,18 +180,143 @@ export class MembersService {
   async findAll(gymId?: string) {
     const filter: any = {};
     if (gymId) filter.gymId = new Types.ObjectId(gymId);
+    const members = await this.memberModel.find(filter).lean().exec();
+    
+    // Check and update feeStatus for members based on due dates
+    await this.checkAndUpdateFeeStatuses(members);
+    
+    // Return fresh data after potential updates
     return this.memberModel.find(filter).lean().exec();
   }
 
+  // Helper to check if any pending fees have reached their due date and update feeStatus
+  private async checkAndUpdateFeeStatuses(members: any[]) {
+    const now = new Date();
+    
+    for (const member of members) {
+      if (member.status !== 'active') continue;
+      if (member.feeStatus === 'pending') continue; // Already pending, no need to update
+      
+      const feeHistory = member.feeHistory || [];
+      
+      // Find any pending fee whose dueDate has arrived or passed
+      const hasDuePendingFee = feeHistory.some((fh: any) => {
+        if (fh.status !== 'pending') return false;
+        const dueDate = new Date(fh.dueDate);
+        return dueDate <= now;
+      });
+      
+      if (hasDuePendingFee && member.feeStatus !== 'pending') {
+        // Update member's feeStatus to pending
+        try {
+          await this.memberModel.findByIdAndUpdate(member._id, { feeStatus: 'pending' }).exec();
+        } catch (e) {
+          // Ignore update errors
+        }
+      }
+    }
+  }
+
   async findOne(id: string) {
-    const found = await this.memberModel.findById(id).lean().exec();
+    let found = await this.memberModel.findById(id).lean().exec();
     if (!found) throw new NotFoundException('Member not found');
-    return found;
+    
+    // Check and update feeStatus if needed
+    await this.checkAndUpdateFeeStatuses([found]);
+    
+    // Return fresh data after potential update
+    return this.memberModel.findById(id).lean().exec();
   }
 
   async update(id: string, dto: UpdateMemberDto) {
+    // fetch current member to detect status changes
+    const existing = await this.memberModel.findById(id).lean().exec();
+    if (!existing) throw new NotFoundException('Member not found');
+
+    const prevStatus = existing.status;
+
     const updated = await this.memberModel.findByIdAndUpdate(id, dto, { new: true }).lean().exec();
     if (!updated) throw new NotFoundException('Member not found');
+
+    // If member was reactivated (left -> active), ensure current month's fee exists
+    try {
+      const newStatus = (dto as any).status;
+      if (prevStatus === 'left' && newStatus === 'active') {
+        // do not add fees for members that remain left
+        // check if feeHistory already contains an entry for current month
+        const now = new Date();
+        const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+        const memberRec: any = await this.memberModel.findById(id).lean().exec();
+        const fh: any[] = Array.isArray(memberRec?.feeHistory) ? memberRec.feeHistory : [];
+        const exists = fh.find((e) => String(e.month) === String(monthStr));
+        if (!exists) {
+          // determine amount using same logic as create()
+          let amount = 0;
+          try {
+            // try gym owner settings first
+            if (memberRec?.gymId) {
+              try {
+                const gym = await this.gymModel.findById(memberRec.gymId).lean().exec();
+                if (gym && gym.ownerId) {
+                  try {
+                    const s = await this.settingsModel.findOne({ userId: new Types.ObjectId(gym.ownerId) }).lean().exec();
+                    if (s && typeof s.monthlyFee === 'number' && s.monthlyFee > 0) amount = s.monthlyFee;
+                  } catch (e) {
+                    // ignore
+                  }
+                }
+                if (!amount && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
+              } catch (e) {
+                // ignore
+              }
+            }
+            // fallback to settings for member.userId
+            if (!amount && memberRec?.userId) {
+              try {
+                const s2 = await this.settingsModel.findOne({ userId: new Types.ObjectId(memberRec.userId) }).lean().exec();
+                if (s2 && typeof s2.monthlyFee === 'number' && s2.monthlyFee > 0) amount = s2.monthlyFee;
+              } catch (e) {
+                // ignore
+              }
+            }
+          } catch (e) {
+            // ignore
+          }
+          if (!amount) {
+            try {
+              const gym = memberRec?.gymId ? await this.gymModel.findById(memberRec.gymId).lean().exec() : null;
+              if (gym && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
+            } catch (e) {
+              // ignore
+            }
+          }
+
+          // create fee document if possible
+          try {
+            const dueDate = now;
+            const createdFee = await this.feeModel.create({ memberId: new Types.ObjectId(id), gymId: memberRec?.gymId || undefined, amount, month: monthStr, dueDate, status: 'pending' });
+            // push into member.feeHistory with the fee _id
+            try {
+              await this.memberModel.findByIdAndUpdate(id, { $push: { feeHistory: { _id: createdFee._id, month: monthStr, amount, dueDate, status: 'pending' } }, $set: { feeStatus: 'pending' } }).exec();
+            } catch (e) {
+              // fallback: push without _id
+              try {
+                await this.memberModel.findByIdAndUpdate(id, { $push: { feeHistory: { month: monthStr, amount, dueDate, status: 'pending' } }, $set: { feeStatus: 'pending' } }).exec();
+              } catch (e2) { /* ignore */ }
+            }
+          } catch (e) {
+            // if fee creation fails, still push feeHistory without _id
+            try {
+              await this.memberModel.findByIdAndUpdate(id, { $push: { feeHistory: { month: monthStr, amount, dueDate: now, status: 'pending' } }, $set: { feeStatus: 'pending' } }).exec();
+            } catch (e2) { /* ignore */ }
+          }
+        }
+      }
+    } catch (e) {
+      // ignore reactivation side-effect errors
+    }
+
     return updated;
   }
 

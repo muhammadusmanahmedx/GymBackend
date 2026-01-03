@@ -1,7 +1,17 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Types, Schema as MongooseSchema } from 'mongoose';
 
 export type MemberDocument = Member & Document;
+
+// Define feeHistory subdocument schema with _id disabled (we set it manually from Fee doc)
+const FeeHistorySchema = new MongooseSchema({
+  _id: { type: MongooseSchema.Types.ObjectId, required: false },
+  month: { type: String, required: true },
+  amount: { type: Number, required: true },
+  dueDate: { type: Date },
+  status: { type: String, enum: ['paid', 'pending', 'overdue'], default: 'pending' },
+  paidDate: { type: Date },
+}, { _id: false }); // disable auto _id for subdocs
 
 @Schema({ timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' } })
 export class Member {
@@ -28,8 +38,8 @@ export class Member {
   @Prop()
   lastPayment?: Date;
 
-  @Prop({ type: [{ month: String, amount: Number, dueDate: Date, status: String, paidDate: Date }], default: [] })
-  feeHistory?: Array<{ month: string; amount: number; dueDate?: Date; status?: string; paidDate?: Date }>;
+  @Prop({ type: [FeeHistorySchema], default: [] })
+  feeHistory?: Array<{ _id?: Types.ObjectId; month: string; amount: number; dueDate?: Date; status?: string; paidDate?: Date }>;
 
   @Prop({ type: Types.ObjectId, ref: 'Gym', required: false })
   gymId?: Types.ObjectId;

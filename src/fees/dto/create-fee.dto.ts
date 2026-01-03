@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, IsNumber, IsDateString } from 'class-validator';
+import { IsNotEmpty, IsString, IsNumber, IsDateString, IsOptional, IsIn } from 'class-validator';
 
 export class CreateFeeDto {
   @IsNotEmpty()
@@ -21,6 +21,11 @@ export class CreateFeeDto {
   @IsDateString()
   dueDate: string;
 
+  @IsOptional()
+  @IsIn(['paid', 'pending', 'overdue'])
   status?: 'paid' | 'pending' | 'overdue';
+
+  @IsOptional()
+  @IsString()
   paidDate?: string;
 }

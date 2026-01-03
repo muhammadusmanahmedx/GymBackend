@@ -51,78 +51,100 @@ export class FeesService {
     const filter: any = {};
     if (memberId) filter.memberId = new Types.ObjectId(memberId);
     if (gymId) filter.gymId = new Types.ObjectId(gymId);
-    const fees = await this.feeModel.find(filter).lean().exec();
+    let fees = await this.feeModel.find(filter).lean().exec();
 
-    // If queried by memberId and no fees exist, create initial fee for member
-    if (memberId && (!fees || fees.length === 0)) {
+    // If queried by memberId, ensure Fee documents exist for all feeHistory entries
+    if (memberId) {
       try {
         const member = await this.memberModel.findById(memberId).lean().exec();
         if (member) {
-          // determine gym monthly fee
-          let amount = 0;
-          if (member.gymId) {
-            try {
-              const gym = await this.gymModel.findById(member.gymId).lean().exec();
-              if (gym && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
-            } catch (e) {
-              // ignore
+          const feeHistory = (member as any).feeHistory || [];
+          
+          // For each feeHistory entry, ensure a Fee document exists
+          for (const fh of feeHistory) {
+            const existingFee = await this.feeModel.findOne({ 
+              memberId: member._id, 
+              month: fh.month 
+            }).lean().exec();
+            
+            if (!existingFee) {
+              // Create Fee document for this feeHistory entry
+              console.log('Creating Fee doc for feeHistory entry:', fh.month);
+              const created = await this.feeModel.create({
+                memberId: member._id,
+                gymId: member.gymId,
+                amount: fh.amount || 0,
+                month: fh.month,
+                dueDate: fh.dueDate || new Date(),
+                status: fh.status || 'pending',
+                paidDate: fh.paidDate || undefined,
+              });
+              
+              // Update feeHistory entry to have matching _id
+              try {
+                const fhIndex = feeHistory.findIndex((x: any) => x.month === fh.month);
+                if (fhIndex >= 0) {
+                  await this.memberModel.updateOne(
+                    { _id: member._id },
+                    { $set: { [`feeHistory.${fhIndex}._id`]: created._id } }
+                  ).exec();
+                }
+              } catch (e) {
+                console.log('Error updating feeHistory _id:', e);
+              }
             }
           }
-
-          // use current date for initial fee due date and month
-          const now = new Date();
-          const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-          const dueDate = now;
-
-          // create fee if not exists
-          const exists = await this.feeModel.findOne({ memberId: member._id, month: monthStr }).lean().exec();
-            if (!exists) {
-            // determine gym monthly fee, prefer per-user settings if present
+          
+          // If no feeHistory at all, create initial fee for current month
+          if (feeHistory.length === 0) {
+            const now = new Date();
+            const monthStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            
+            // determine amount from settings
             let amount = 0;
             if (member.gymId) {
               try {
                 const gym = await this.gymModel.findById(member.gymId).lean().exec();
                 if (gym) {
-                  // try settings for gym owner
                   try {
                     const settings = await this.settingsModel.findOne({ userId: gym.ownerId }).lean().exec();
                     if (settings && typeof settings.monthlyFee === 'number' && settings.monthlyFee > 0) {
                       amount = settings.monthlyFee;
                     }
-                  } catch (e) {
-                    // ignore
-                  }
+                  } catch (e) { /* ignore */ }
                   if (!amount && typeof gym.monthlyFee === 'number') amount = gym.monthlyFee;
                 }
-              } catch (e) {
-                // ignore
-              }
+              } catch (e) { /* ignore */ }
             }
-            const created = await this.feeModel.create({ memberId: member._id, gymId: member.gymId, amount, month: monthStr, dueDate, status: member.feeStatus || 'pending' });
-            // also push to member.feeHistory with same _id
-            try {
-              await this.memberModel.findByIdAndUpdate(member._id, {
-                $push: {
-                  feeHistory: {
-                    _id: created._id,
-                    month: monthStr,
-                    amount,
-                    dueDate,
-                    status: member.feeStatus || 'pending',
-                  },
+            
+            const created = await this.feeModel.create({
+              memberId: member._id,
+              gymId: member.gymId,
+              amount,
+              month: monthStr,
+              dueDate: now,
+              status: member.feeStatus || 'pending',
+            });
+            
+            await this.memberModel.findByIdAndUpdate(member._id, {
+              $push: {
+                feeHistory: {
+                  _id: created._id,
+                  month: monthStr,
+                  amount,
+                  dueDate: now,
+                  status: member.feeStatus || 'pending',
                 },
-              }).exec();
-            } catch (e) {
-              // ignore
-            }
+              },
+            }).exec();
           }
+          
+          // Re-query fees after syncing
+          fees = await this.feeModel.find({ memberId: new Types.ObjectId(memberId) }).lean().exec();
         }
       } catch (e) {
-        // ignore creation errors
+        console.log('Error syncing fees:', e);
       }
-
-      // re-query and return
-      return this.feeModel.find({ memberId: new Types.ObjectId(memberId) }).lean().exec();
     }
 
     return fees;
@@ -135,138 +157,129 @@ export class FeesService {
   }
 
   async update(id: string, dto: UpdateFeeDto) {
-    // Attempt to find Fee doc by id
+    console.log('=== FEE UPDATE START ===');
+    console.log('Fee ID:', id);
+    console.log('DTO:', dto);
+
+    // Find the Fee document
     let feeDoc = await this.feeModel.findById(id).lean().exec();
-    let paidDate = dto.paidDate ? new Date(dto.paidDate as any) : new Date();
-
-    // If not found, try to resolve as member.feeHistory subdoc id and update member subdoc directly
+    
     if (!feeDoc) {
-      try {
-        const memberWithSub = await this.memberModel.findOne({ 'feeHistory._id': new Types.ObjectId(id) }).lean().exec();
-        if (memberWithSub) {
-          const fh = (memberWithSub as any).feeHistory.find((x: any) => String(x._id) === String(id));
-          if (fh) {
-            // update member subdoc status and paidDate
-            try {
-              await this.memberModel.updateOne(
-                { _id: memberWithSub._id, 'feeHistory._id': new Types.ObjectId(id) },
-                { $set: { 'feeHistory.$.status': 'paid', 'feeHistory.$.paidDate': paidDate } }
-              ).exec();
-              // also update member summary fields
-              try {
-                await this.memberModel.findByIdAndUpdate(memberWithSub._id, { feeStatus: 'paid', lastPayment: paidDate }, { new: true }).exec();
-              } catch (e) {
-                // ignore
-              }
-            } catch (e) {
-              // ignore
-            }
-
-            // find or create corresponding Fee document for this member+month
-            feeDoc = await this.feeModel.findOne({ memberId: memberWithSub._id, month: fh.month }).lean().exec();
-            if (!feeDoc) {
-              const created = await this.feeModel.create({ memberId: memberWithSub._id, gymId: memberWithSub.gymId, amount: fh.amount || 0, month: fh.month, dueDate: fh.dueDate || new Date(), status: 'paid', paidDate });
-              feeDoc = created.toObject();
-              // ensure member.feeHistory contains this fee _id (if previous subdoc didn't have it)
-              try {
-                await this.memberModel.updateOne({ _id: memberWithSub._id, 'feeHistory._id': new Types.ObjectId(id) }, { $set: { 'feeHistory.$._id': created._id } }).exec();
-              } catch (e) {
-                // ignore
-              }
-            } else {
-              // update existing fee doc to paid
-              await this.feeModel.findByIdAndUpdate(feeDoc._id, { status: 'paid', paidDate }, { new: true }).lean().exec();
-            }
-
-            // create next month's fee if member is active
-            try {
-              if (memberWithSub.status === 'active') {
-                const day = paidDate.getUTCDate();
-                const next = new Date(Date.UTC(paidDate.getUTCFullYear(), paidDate.getUTCMonth() + 1, day));
-                const monthStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
-                const exists = await this.feeModel.findOne({ memberId: memberWithSub._id, month: monthStr }).lean().exec();
-                if (!exists) {
-                  const newFee = await this.feeModel.create({ memberId: memberWithSub._id, gymId: memberWithSub.gymId, amount: fh.amount || 0, month: monthStr, dueDate: next, status: 'pending' });
-                  try {
-                    await this.memberModel.findByIdAndUpdate(memberWithSub._id, { $push: { feeHistory: { _id: newFee._id, month: monthStr, amount: fh.amount || 0, dueDate: next, status: 'pending' } } }).exec();
-                  } catch (e) {
-                    // ignore
-                  }
-                }
-              }
-            } catch (e) {
-              // ignore
-            }
-            return feeDoc;
-          }
-        }
-      } catch (e) {
-        // ignore lookup errors
-      }
+      console.log('Fee document not found by ID');
       throw new NotFoundException('Fee not found');
     }
 
-    // At this point we have feeDoc (found by id)
-    const updated = await this.feeModel.findByIdAndUpdate(feeDoc._id, {
-      ...dto,
-      dueDate: dto.dueDate ? new Date(dto.dueDate as any) : undefined,
-      paidDate: dto.paidDate ? new Date(dto.paidDate as any) : undefined,
-    }, { new: true }).lean().exec();
+    console.log('Found fee document:', feeDoc);
 
-    // if marked paid now, create next month's fee for member if active
+    const paidDate = dto.paidDate ? new Date(dto.paidDate as any) : new Date();
+
+    // Update the Fee document
+    const updated = await this.feeModel.findByIdAndUpdate(
+      id,
+      {
+        status: dto.status || feeDoc.status,
+        paidDate: dto.status === 'paid' ? paidDate : undefined,
+      },
+      { new: true }
+    ).lean().exec();
+
+    console.log('Updated fee document:', updated);
+
+    // If marking as paid, update member's feeHistory and create next month's fee
     if (dto.status === 'paid') {
-      try {
-        const member = await this.memberModel.findById(feeDoc.memberId).lean().exec();
-        if (member && member.status === 'active') {
-          const paid = dto.paidDate ? new Date(dto.paidDate as any) : (feeDoc.paidDate ? new Date(feeDoc.paidDate) : new Date());
-          const day = paid.getUTCDate();
-          const next = new Date(Date.UTC(paid.getUTCFullYear(), paid.getUTCMonth() + 1, day));
-          const monthStr = `${next.getUTCFullYear()}-${String(next.getUTCMonth() + 1).padStart(2, '0')}`;
-          const exists = await this.feeModel.findOne({ memberId: feeDoc.memberId, month: monthStr }).lean().exec();
-          if (!exists) {
-            const newFee = await this.feeModel.create({ memberId: feeDoc.memberId, gymId: feeDoc.gymId, amount: feeDoc.amount, month: monthStr, dueDate: next, status: 'pending' });
-            try {
-              await this.memberModel.findByIdAndUpdate(feeDoc.memberId, { $push: { feeHistory: { _id: newFee._id, month: monthStr, amount: feeDoc.amount, dueDate: next, status: 'pending' } } }).exec();
-            } catch (e) {
-              // ignore
-            }
-          }
-        }
-      } catch (e) {
-        // ignore errors creating next fee
-      }
-      // mark the existing fee as paid in member.feeHistory (if present) or push an entry
-      try {
-        const paid = dto.paidDate ? new Date(dto.paidDate as any) : (feeDoc.paidDate ? new Date(feeDoc.paidDate) : new Date());
-        const res = await this.memberModel.updateOne(
-          { _id: feeDoc.memberId, 'feeHistory.month': feeDoc.month },
-          { $set: { 'feeHistory.$.status': 'paid', 'feeHistory.$.paidDate': paid } }
-        ).exec();
-        if ((res as any)?.modifiedCount === 0) {
-          await this.memberModel.findByIdAndUpdate(feeDoc.memberId, {
-            $push: {
-              feeHistory: {
-                _id: feeDoc._id,
-                month: feeDoc.month,
-                amount: feeDoc.amount,
-                dueDate: feeDoc.dueDate,
-                status: 'paid',
-                paidDate: paid,
-              },
-            },
-          }).exec();
-        }
-
-        // update member summary fields
-        try {
-          await this.memberModel.findByIdAndUpdate(feeDoc.memberId, { feeStatus: 'paid', lastPayment: paid }, { new: true }).exec();
-        } catch (e) {
-          // ignore
-        }
-      } catch (e) {
-        // ignore
+      console.log('Processing paid status...');
+      
+      // Get the member
+      const member = await this.memberModel.findById(feeDoc.memberId).exec();
+      
+      if (!member) {
+        console.log('Member not found:', feeDoc.memberId);
+        return updated;
       }
 
+      console.log('Found member:', member.name);
+      console.log('Current feeHistory:', JSON.stringify(member.feeHistory));
+
+      // Find the feeHistory entry by month (more reliable than _id)
+      const feeMonth = feeDoc.month;
+      const fhIndex = member.feeHistory.findIndex((fh: any) => fh.month === feeMonth);
+      
+      console.log('Looking for month:', feeMonth, 'Found at index:', fhIndex);
+
+      if (fhIndex >= 0) {
+        // Update the existing feeHistory entry
+        member.feeHistory[fhIndex].status = 'paid';
+        member.feeHistory[fhIndex].paidDate = paidDate;
+        console.log('Updated feeHistory entry at index', fhIndex);
+      } else {
+        // feeHistory entry doesn't exist, add it
+        member.feeHistory.push({
+          month: feeMonth,
+          amount: feeDoc.amount,
+          dueDate: feeDoc.dueDate,
+          status: 'paid',
+          paidDate: paidDate,
+        } as any);
+        console.log('Added new feeHistory entry for month:', feeMonth);
+      }
+
+      // Update lastPayment
+      member.lastPayment = paidDate;
+
+      // Create next month's fee if member is active
+      // Calculate next month based on the FEE's month, not the payment date
+      if (member.status === 'active') {
+        // Parse the fee's month (e.g., "2026-01" -> year=2026, month=0)
+        const [feeYear, feeMonthNum] = feeDoc.month.split('-').map(Number);
+        // Calculate next month from the fee's month
+        const nextMonthDate = new Date(Date.UTC(feeYear, feeMonthNum, 1)); // feeMonthNum is 1-based, so this gives us next month
+        const nextMonth = `${nextMonthDate.getUTCFullYear()}-${String(nextMonthDate.getUTCMonth() + 1).padStart(2, '0')}`;
+        
+        // Use the same day of month as the original due date for the next due date
+        const originalDueDay = new Date(feeDoc.dueDate).getUTCDate();
+        const nextDueDate = new Date(Date.UTC(nextMonthDate.getUTCFullYear(), nextMonthDate.getUTCMonth(), originalDueDay));
+        
+        console.log('Fee month:', feeDoc.month, '-> Next month:', nextMonth);
+
+        // Check if next month fee already exists in feeHistory
+        const nextExists = member.feeHistory.some((fh: any) => fh.month === nextMonth);
+        
+        console.log('Next month exists in feeHistory?', nextExists);
+
+        if (!nextExists) {
+          // Create Fee document for next month
+          const newFee = await this.feeModel.create({
+            memberId: feeDoc.memberId,
+            gymId: feeDoc.gymId,
+            amount: feeDoc.amount,
+            month: nextMonth,
+            dueDate: nextDueDate,
+            status: 'pending',
+          });
+          
+          console.log('Created next month Fee document:', newFee._id);
+
+          // Add to feeHistory
+          member.feeHistory.push({
+            month: nextMonth,
+            amount: feeDoc.amount,
+            dueDate: nextDueDate,
+            status: 'pending',
+          } as any);
+
+          console.log('Added next month to feeHistory');
+        }
+      }
+
+      // Keep feeStatus as 'paid' - it will change to 'pending' only when next month's due date arrives
+      // This is handled by a separate check when fetching members
+      member.feeStatus = 'paid';
+
+
+      // Save the member with all changes
+      await member.save();
+      console.log('Saved member. New feeHistory:', JSON.stringify(member.feeHistory));
+      console.log('=== FEE UPDATE END ===');
     }
 
     return updated;
