@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node dist/main.js",
     "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
+    "dev": "npm run start:dev",
     "build": "tsc -p tsconfig.build.json",
     "start:prod": "node dist/main.js"
   },
